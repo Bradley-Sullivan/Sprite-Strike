@@ -14,6 +14,8 @@
 #define MAX_NUM_ENEMIES 4
 #define NUM_ETYPES      6
 
+#define NUM_LEVELS		1
+
 #define E_PROJ_INTV     750.f    // (ms)
 #define P_PROJ_INTV     500.f    // (ms)
 
@@ -21,13 +23,31 @@
 #define LR              1
 
 #define PATH0LR         "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
-#define PATH0UD         "UUDDUUDDUUDDUUDDUUDDUUDDUUDDUUD"
+#define PATH0UD         "UUuuUUDDUUDDUUDDUUDDUUDDUUDDUUD"
 
 #define PATH1LR         "LLLLLLRRRRRRLLLLLLRRRRRRLLLLLL"
 #define PATH1UD         "DDDUUUUUUDDDDDDUUUUUUDDDDDDUUU"
 
 #define U32LROT(X)      (0x80000000 & X ? ((X << 1) | 1) : (X << 1))
 #define U32RROT(X)      (0x00000001 & X ? ((X >> 1) | 0x80000000) : (X >> 1))
+
+#define GAME_OVER       0x01
+#define PLAYING         0x02
+
+typedef struct level_t {
+	uint8_t		enemy_ct;
+
+	uint32_t	ud_masks[MAX_NUM_ENEMIES];
+	uint32_t	lr_masks[MAX_NUM_ENEMIES];
+
+	float 		atk_intervals[MAX_NUM_ENEMIES];
+
+	float		ud_intervals[MAX_NUM_ENEMIES];
+	float		lr_intervals[MAX_NUM_ENEMIES];
+
+	char		ud_pathing[MAX_NUM_ENEMIES][32];
+	char		lr_pathing[MAX_NUM_ENEMIES][32];
+} level_t;
 
 typedef struct game_timer_t {
     float interval;
@@ -40,8 +60,11 @@ typedef struct player_t {
     uint8_t     emitter;        // shift value
     uint8_t     c_pos;
     uint8_t     r_pos;
-    uint8_t     super_cd;
-    uint8_t     atk_cd;
+    uint8_t     super_en;       // 0 -> disabled
+    uint8_t     atk_en;         // 0 -> disabled
+
+    game_timer_t     atk_timer;
+    game_timer_t     super_timer;
 } player_t;
 
 typedef struct enemy_t {
@@ -78,13 +101,26 @@ struct game_data {
     uint32_t    frame[GAME_HEIGHT];
 } game_data;
 
-// ENEMY SPRITES
-static const uint16_t e_sprites[NUM_ETYPES] = { 0x96F9, 0x966F, 0x136D, 0x6317, 0x3EE3, 0x06F0 };
+// ENEMY SPRITE PREFABS
+static const uint16_t e_sprites[NUM_ETYPES] = { 0x136D, 0x0969, 0x05E5, 0x23C4, 0x25A4, 0xFFFF };
+static const uint16_t e_emitters[NUM_ETYPES] = { 0x0240, 0x0808, 0x0080, 0x0400, 0x2480, 0x8888 };
+
+// static level_t LEVEL0 = { 2, {1, 1, 0, 0}, {1, 1, 0, 0}, {1500.f, 2750.f, 0, 0}, {1000.f, 1000.f, 0.f, 0.f}, {1000.f, 1000.f, 0.f, 0.f}, \
+// 						{"DDDUUUDDDUUUDDDUUUDDDUUUDDDUUUDU", "UUUDDDUUUDDDUUUDDDUUUDDDUUUDDDUD", "", ""},	 \
+// 						{"LLLRRRLLLRRRLLLRRRLLLRRRLLLRRRLR", "RRRLLLRRRLLLRRRLLLRRRLLLRRRLLLRL", "", ""}};
+
+static level_t LEVEL0 = { 2, {1, 1, 0, 0}, {1, 1, 0, 0}, {3500.f, 3000.f, 0, 0}, {2000.f, 2000.f, 0.f, 0.f}, {2000.f, 2000.f, 0.f, 0.f}, \
+						{PATH0UD, PATH0UD, "", ""},	 \
+						{PATH0LR, PATH0LR, "", ""}};
+
+level_t *levels[NUM_LEVELS] = { &LEVEL0 };
 
 static player_t player;
 static enemy_t enemies[MAX_NUM_ENEMIES];
 
 void init_game();
+
+void spawn_enemies(uint8_t level);
 
 void update_game();
 
@@ -92,6 +128,7 @@ void update_input();
 void update_player();
 void update_enemies();
 void update_projectiles();
+void update_conditions();
 
 void update_frame();
 
@@ -107,8 +144,10 @@ void print_frame();
 int main(void) {
     init_game();
 
+	srand(time(NULL));
+
     game_data.i_time = (clock() * 1000 / CLOCKS_PER_SEC);
-    while (1) { /*  game loop   */
+    while (!(game_data.g_state & GAME_OVER)) { /*  game loop   */
         usleep(50000);
         game_data.g_time = clock() - game_data.i_time;
 
@@ -121,40 +160,44 @@ int main(void) {
 }
 
 void init_game() {
+    game_data.g_state = PLAYING;
+
     player.sprite = 0x0660;
     player.r_pos = 0;
     player.c_pos = 0;
 
-    enemies[0].sprite = e_sprites[2];
+	spawn_enemies(0);
 
-    enemies[0].r_pos = 0;
-    enemies[0].c_pos = GAME_WIDTH;
-
-    enemies[0].r_pos = GAME_HEIGHT - SPRITE_HEIGHT;
-    enemies[0].c_pos = GAME_WIDTH;
-    enemies[0].emitter = 0x8008;
-    enemies[0].atk_timer.interval = 50000;
-
-    enemies[0].mvmt_mask[LR] = 1;
-    enemies[0].mvmt_mask[UD] = 1;
-    enemies[0].ud_mvmt = set_movement(PATH1UD);
-    enemies[0].lr_mvmt = set_movement(PATH1LR);
-
-    enemies[0].mvmt_timer[UD].interval = 1000;
-    enemies[0].mvmt_timer[LR].interval = 1000;
-
-    enemies[0].mvmt_timer[UD].i_time = clock();
-    enemies[0].mvmt_timer[LR].i_time = clock();
-
-    game_data.p_proj[2] = (1 << 20);
-    game_data.p_proj_timer.i_time = clock();
-
-    game_data.e_proj[2] = (1 << 7);
-    game_data.e_proj_timer.i_time = clock();
-
-    game_data.num_enemies = 2;
     game_data.p_proj_timer.interval = P_PROJ_INTV;
     game_data.e_proj_timer.interval = E_PROJ_INTV;
+}
+
+void spawn_enemies(uint8_t level) {
+	if (level >= 0 && level < NUM_LEVELS) {
+		game_data.num_enemies = levels[level]->enemy_ct;
+
+		for (int i = 0; i < game_data.num_enemies; i += 1) {
+			enemies[i].r_pos = (i * SPRITE_HEIGHT) % GAME_HEIGHT;
+			enemies[i].c_pos = GAME_WIDTH - (i * SPRITE_WIDTH);
+
+			enemies[i].sprite = e_sprites[(int)rand() % NUM_ETYPES];
+			enemies[i].emitter = e_emitters[(int)rand() % NUM_ETYPES];
+
+			enemies[i].atk_timer.interval = levels[level]->atk_intervals[i];
+
+			enemies[i].mvmt_mask[UD] = levels[level]->ud_masks[i];
+			enemies[i].mvmt_mask[LR] = levels[level]->lr_masks[i];
+
+			enemies[i].mvmt_timer[UD].interval = levels[level]->ud_intervals[i];
+			enemies[i].mvmt_timer[LR].interval = levels[level]->lr_intervals[i];
+
+			enemies[i].ud_mvmt = set_movement(levels[level]->ud_pathing[i]);
+			enemies[i].lr_mvmt = set_movement(levels[level]->lr_pathing[i]);
+
+			enemies[i].mvmt_timer[UD].i_time = clock();
+			enemies[i].mvmt_timer[LR].i_time = clock();
+		}
+	}
 }
 
 void update_game() {
@@ -163,12 +206,13 @@ void update_game() {
     update_player();
     update_enemies();
     update_projectiles();
+    update_conditions();
 
     update_frame();
 }
 
 void update_player() {
-    uint32_t p_slice = 0;
+    uint32_t p_slice = 0, e_slice = 0;
 
     for (int i = 0; i < GAME_HEIGHT; i += 1) {
         uint8_t p_depth = i - player.r_pos;
@@ -186,18 +230,23 @@ void update_player() {
                 // deform player sprite
                 player.sprite = clear_sprite_slice(p_depth, p_slice, player.sprite);
             }
+
+            for (int k = 0; k < game_data.num_enemies; k += 1) {
+                uint8_t e_depth = i - enemies[k].r_pos;
+                if (e_depth == p_depth) {
+                    e_slice = get_sprite_slice(e_depth, enemies[k].sprite);
+                    p_slice = get_sprite_slice(p_depth, player.sprite);
+                    e_slice <<= GAME_WIDTH - enemies[k].c_pos;
+                    p_slice <<= GAME_WIDTH - player.c_pos;
+                    p_slice &= e_slice;
+
+                    if (p_slice) {
+                        game_data.g_state |= GAME_OVER;
+                    }
+                }
+            }
         }
     }
-
-    // for (int i = 0; i < game_data.num_enemies; i += 1) {
-    //     // want bit-level resolution on enemy-player collisions!!
-    //     if (enemies[i].c_pos <= player.c_pos + (SPRITE_WIDTH - 1)) {
-    //         if (enemies[i].r_pos <= player.r_pos + (SPRITE_HEIGHT - 1) &&
-    //             enemies[i].r_pos >= player.r_pos) {
-    //             // game over
-    //         }
-    //     }
-    // }
 }
 
 void update_enemies() {
@@ -278,7 +327,7 @@ void update_frame() {
         if (p_depth >= 0 && p_depth < SPRITE_HEIGHT) {
             uint32_t p_slice = get_sprite_slice(p_depth, player.sprite);
             // printf("\tp_slice       : "); p_bits(p_slice, 32);
-            p_slice <<= GAME_WIDTH - player.c_pos;
+            p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
             game_data.frame[i] |= p_slice;
         }
 
@@ -292,6 +341,23 @@ void update_frame() {
                 game_data.frame[i] |= e_slice;
             }
         }
+    }
+}
+
+void update_conditions() {
+    if (player.sprite == 0) {
+        game_data.g_state |= GAME_OVER;
+    }
+
+    uint8_t alive_ct = game_data.num_enemies;
+    for (int i = 0; i < game_data.num_enemies; i += 1) {
+        if (enemies[i].sprite == 0) {
+            alive_ct -= 1;
+        }
+    }
+
+    if (alive_ct == 0) {
+        // next wave
     }
 }
 
