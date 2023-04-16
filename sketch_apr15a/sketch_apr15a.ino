@@ -6,6 +6,7 @@
 
 #include <Time.h>
 #include <MD_MAX72xx.h>
+#include <Talkie.h>
 
 #define GAME_HEIGHT     8
 #define GAME_WIDTH      24
@@ -36,9 +37,16 @@
 #define U32LROT(X)      (0x80000000 & X ? ((X << 1) | 1) : (X << 1))
 #define U32RROT(X)      (0x00000001 & X ? ((X >> 1) | 0x80000000) : (X >> 1))
 
+// game states
 #define GAME_OVER       0x01
 #define PLAYING         0x02
 #define INIT            0x04
+
+// game flags
+#define GAME_WIN        0x01
+#define GAME_LOSE       0x02
+#define GAME_CONTINUE   0x04
+
 
 // DISPLAY
 #define HWTYPE      MD_MAX72XX::GENERIC_HW
@@ -55,7 +63,6 @@
 #define A_BTN       0x01  // digital pin 53 (A)
 #define B_BTN       0x10  // digital pin 10 (B)
 // #define S_BTN       (uint8_t)0x20  // digital pin 11 (Start/Select)
-#define PCI_MASK    0x3F           // pin change interrupt mask (might not use idk)
 
 typedef struct level_t {
 	uint8_t		enemy_ct;
@@ -105,9 +112,6 @@ typedef struct enemy_t {
 } enemy_t;
 
 struct game_data {
-    float       i_time;         // (ms)
-    float       g_time;         // (ms)
-
     /* time since last proj. position update */
     game_timer_t     p_proj_timer;
     game_timer_t     e_proj_timer;
@@ -131,11 +135,6 @@ volatile unsigned char *PORT_B  = (unsigned char *) 0x25;
 volatile unsigned char *DDR_B   = (unsigned char *) 0x24;
 volatile unsigned char *PIN_B   = (unsigned char *) 0x23;
 
-// Registers for Pin Change Interrupts (MIGHT NOT USE)
-volatile unsigned char *myPCICR   = (unsigned char *) 0x68;
-volatile unsigned char *myPCIFR   = (unsigned char *) 0x3B;
-volatile unsigned char *myPCMSK0  = (unsigned char *) 0x6B;
-
 // ENEMY SPRITE PREFABS
 static const uint16_t e_sprites[NUM_ETYPES] = { 0x136D, 0x0969, 0x05E5, 0x23C4, 0x25A4, 0xFFFF };
 static const uint16_t e_emitters[NUM_ETYPES] = { 0x0240, 0x0808, 0x0080, 0x0400, 0x2480, 0x8888 };
@@ -144,9 +143,9 @@ static const uint16_t e_emitters[NUM_ETYPES] = { 0x0240, 0x0808, 0x0080, 0x0400,
 // 						{"DDDUUUDDDUUUDDDUUUDDDUUUDDDUUUDU", "UUUDDDUUUDDDUUUDDDUUUDDDUUUDDDUD", "", ""},	 \
 // 						{"LLLRRRLLLRRRLLLRRRLLLRRRLLLRRRLR", "RRRLLLRRRLLLRRRLLLRRRLLLRRRLLLRL", "", ""}};
 
-static level_t LEVEL0 = { 2, {1, 1, 0, 0}, {1, 1, 0, 0}, {5000.f, 5000.f, 0, 0}, {5000.f, 5000.f, 0.f, 0.f}, {5000.f, 5000.f, 0.f, 0.f}, \
+static level_t LEVEL0 = { 2, {1, 1, 0, 0}, {1, 1, 0, 0}, {3000.f, 3000.f, 0, 0}, {2700.f, 1500.f, 0.f, 0.f}, {1000.f, 1000.f, 0.f, 0.f}, \
 						{PATH0UD, PATH0UD, "", ""},	 \
-						{PATH0LR, PATH0LR, "", ""}};
+						{PATH1LR, PATH1LR, "", ""}};
 
 level_t *levels[NUM_LEVELS] = { &LEVEL0 };
 
@@ -157,6 +156,8 @@ void init_game();
 void init_io();
 
 void spawn_enemies(uint8_t level);
+
+void create_character();
 
 void update_game();
 
@@ -180,28 +181,26 @@ uint16_t clear_sprite_slice(uint8_t depth, uint16_t slice_mask, uint16_t sprite)
 void p_bits(uint32_t x, int width);
 void print_frame();
 
+void game_over_animation(uint8_t type);
 
 void setup() {
   // put your setup code here, to run once:
-  Serial.begin(9600);
-  init_game();
   init_io();
 
+  init_game();
+
   disp.begin();
-
-  game_data.i_time = millis();
-
-  randomSeed(random());
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-  game_data.g_time = millis() - game_data.i_time;
-  if (!(game_data.g_state & GAME_OVER)) {
+  if (game_data.g_state & GAME_OVER) {
     // play animation?
     // game over screen?? (continue/play again options?)
   } else if (game_data.g_state & INIT) {
     // character creation and serial data sync
+    create_character();
+    game_data.g_state = PLAYING;
   } else if (game_data.g_state & PLAYING) {
     update_game();
     push_frame();
@@ -211,10 +210,6 @@ void loop() {
 void init_io() {
   // input pins
   *DDR_B &= ~(U_BTN | D_BTN | R_BTN | L_BTN | A_BTN | B_BTN);
-
-  // pci enable (optional?)
-  // *my_PCICR   |= 0x01;
-  // *my_PCMSK0  |= PCI_MASK;
 }
 
 void p_bits(uint32_t x, int width) {

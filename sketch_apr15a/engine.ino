@@ -15,6 +15,8 @@ void init_game() {
 
   game_data.p_proj_timer.interval = P_PROJ_INTV;
   game_data.e_proj_timer.interval = E_PROJ_INTV;
+
+  game_data.g_state = INIT;
 }
 
 void spawn_enemies(uint8_t level) {
@@ -25,8 +27,10 @@ void spawn_enemies(uint8_t level) {
 			enemies[i].r_pos = (i * SPRITE_HEIGHT) % GAME_HEIGHT;
 			enemies[i].c_pos = GAME_WIDTH - (i * SPRITE_WIDTH);
 
-			enemies[i].sprite = e_sprites[(int)random(0, NUM_ETYPES)];
-			enemies[i].emitter = e_emitters[(int)random(0, NUM_ETYPES)];
+      randomSeed(analogRead(0));
+			enemies[i].sprite = e_sprites[(int)random(NUM_ETYPES)];
+      randomSeed(analogRead(0));
+			enemies[i].emitter = e_emitters[(int)random(NUM_ETYPES)];
 
 			enemies[i].atk_timer.interval = levels[level]->atk_intervals[i];
 
@@ -43,6 +47,76 @@ void spawn_enemies(uint8_t level) {
 			enemies[i].mvmt_timer[LR].i_time = millis();
 		}
 	}
+}
+
+void create_character() {
+  uint8_t done = 0;
+  uint8_t create_frame[8];
+  uint8_t curs_row = 2, curs_col = 2, s_bits_left = 8, e_bits_left = 2;
+  uint16_t sprite = 0, emitter = 0;
+
+  static uint8_t prev_input = 0;
+  static uint16_t eq_count = 0;
+
+  for (int i = 0; i < 8; i += 1) {
+    create_frame[i] = 0;
+    if (i == 1 || i == 6) create_frame[i] = 0x7E;
+    else if (i != 0 && i != 7) create_frame[i] = 0x42;
+  }
+
+  while (!done) {
+    // can potentially debounce PIN_B before storing
+    game_data.input = *PIN_B;
+
+    if (prev_input != game_data.input || (eq_count > 100 && eq_count < 1000)) {
+      if (prev_input == game_data.input) {
+        delay(300);
+        eq_count = (eq_count == 1000) ? 0 : eq_count + 1;
+      } else {
+        eq_count = 0;
+      }
+
+      if (game_data.input & A_BTN) {
+        if (s_bits_left) {
+          create_frame[curs_row] |= (1 << curs_col);
+          sprite |= (1 << curs_col - 2) << ((curs_row - 2) * SPRITE_WIDTH);
+          s_bits_left -= 1;
+        } else if (e_bits_left) {
+          emitter |= (1 << curs_col - 2) << ((curs_row - 2) * SPRITE_WIDTH);
+          e_bits_left -= 1;
+        } else {
+          done = 1;
+        }
+      } if (game_data.input & B_BTN) {
+        if (e_bits_left < 2) done = 1;
+      } if (game_data.input & U_BTN) {
+        if (curs_row > 1) curs_row -= 1;
+      } if (game_data.input & D_BTN) {
+        if (curs_row < 6) curs_row += 1;
+      } if (game_data.input & R_BTN) {
+        if (curs_col > 1) curs_col -= 1;
+      } if (game_data.input & L_BTN) {
+        if (curs_col < 6) curs_col += 1;
+      }
+    } else {
+      eq_count = (eq_count == 1000) ? 0 : eq_count + 1;
+    }
+
+    disp.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
+    disp.clear();
+    for (int i = 0; i < GAME_HEIGHT; i += 1) {
+      disp.setRow(2, i, (uint8_t)(0x55 >> (i % 2)));
+      disp.setRow(1, i, create_frame[i]);
+      disp.setRow(1, curs_row, (uint8_t)(1 << curs_col) | 0x42 | create_frame[curs_row]);
+      disp.setRow(0, i, (uint8_t)(0x55 >> (i % 2)));      
+    }
+    disp.control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
+    prev_input = game_data.input;
+  }
+
+  delay(2000);
+  player.sprite = sprite;
+  player.emitter = emitter;
 }
 
 void update_game() {
@@ -119,7 +193,7 @@ void update_player() {
       player.sprite <<= SPRITE_WIDTH;
     }
   }
-  
+
   for (int i = 0; i < GAME_HEIGHT; i += 1) {
     uint8_t p_depth = i - player.r_pos;
     if (p_depth >= 0 && p_depth < player.s_height) { /* if "scanline" hits player */
@@ -227,20 +301,20 @@ void update_projectiles() {
 }
 
 void update_conditions() {
-    if (player.sprite == 0) {
-        game_data.g_state |= GAME_OVER;
-    }
+  if (player.sprite == 0) {
+    game_data.g_state |= GAME_OVER;
+  }
 
-    uint8_t alive_ct = game_data.num_enemies;
-    for (int i = 0; i < game_data.num_enemies; i += 1) {
-        if (enemies[i].sprite == 0) {
-            alive_ct -= 1;
-        }
+  uint8_t alive_ct = game_data.num_enemies;
+  for (int i = 0; i < game_data.num_enemies; i += 1) {
+    if (enemies[i].sprite == 0) {
+        alive_ct -= 1;
     }
+  }
 
-    if (alive_ct == 0) {
-        // next wave
-    }
+  if (alive_ct == 0) {
+    game_data.g_state = GAME_OVER; 
+  }
 }
 
 void update_frame() {
@@ -293,7 +367,7 @@ void push_frame() {
   disp.clear();
   // print_frame();
   for (int i = 0; i < GAME_HEIGHT; i += 1) {
-    disp.setRow(2, i, (uint8_t)((game_data.frame[i] & 0x07FF0000) >> 16));
+    disp.setRow(2, i, (uint8_t)((game_data.frame[i] & 0x00FF0000) >> 16));
     disp.setRow(1, i, (uint8_t)((game_data.frame[i] & 0x0000FF00) >> 8));
     disp.setRow(0, i, (uint8_t)(game_data.frame[i] &  0x000000FF));
   }
