@@ -3,8 +3,8 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <unistd.h>
+#include <time.h>
 
-#include <Time.h>
 #include <MD_MAX72xx.h>
 #include <Talkie.h>
 #include <Vocab_US_Large.h>
@@ -21,7 +21,7 @@
 #define MAX_NUM_ENEMIES 4
 #define NUM_ETYPES      6
 
-#define NUM_LEVELS		  2
+#define NUM_LEVELS		  3
 
 #define E_PROJ_INTV     300.f    // (ms)
 #define P_PROJ_INTV     200.f    // (ms)
@@ -39,6 +39,9 @@
 
 #define PATH2LR         "LRLLLLLLLLLRRRLLLLLLRRRLLLLLLR"
 #define PATH2UD         "UDUDUDUDUDUDUDUDUDUDUDUDUDUDUD"
+
+#define PATH3LR         "LLLLLLLLLLLLLLRRRRLLLLLLLLLRRR"
+#define PATH3UD         "UUUUDDDDDDUUUUDDDDDDUUUUDDDDUU"
 
 #define U32LROT(X)      (0x80000000 & X ? ((X << 1) | 1) : (X << 1))
 #define U32RROT(X)      (0x00000001 & X ? ((X >> 1) | 0x80000000) : (X >> 1))
@@ -65,6 +68,7 @@
 
 typedef struct level_t {
   uint8_t   num_waves;
+  uint8_t   eq_firing;
 	uint8_t		enemy_ct;
 
 	uint32_t	ud_masks[MAX_NUM_ENEMIES];
@@ -123,6 +127,7 @@ struct game_data {
 
   uint8_t     g_state;
   uint8_t     cur_level;
+  uint8_t     cur_stage;
 
   uint32_t    frame[GAME_HEIGHT];
 } game_data;
@@ -140,13 +145,16 @@ volatile unsigned char *PIN_B   = (unsigned char *) 0x23;
 static const uint16_t e_sprites[NUM_ETYPES] = { 0x136D, 0x0969, 0x05E5, 0x23C4, 0x25A4, 0xFFFF };
 static const uint16_t e_emitters[NUM_ETYPES] = { 0x0240, 0x0808, 0x0080, 0x0400, 0x2480, 0x8080 };
 
-static level_t LEVEL0 = { 1, 1, {1, 1, 0, 0}, {1, 1, 0, 0}, {3000.f, 3000.f, 0, 0}, {2700.f, 1500.f, 0.f, 0.f}, {1000.f, 1000.f, 0.f, 0.f}, \
+static level_t LEVEL0 = { 1, 0, 1, {1, 1, 0, 0}, {1, 1, 0, 0}, {2250.f, 2250.f, 0, 0}, {2700.f, 1500.f, 0.f, 0.f}, {1000.f, 1000.f, 0.f, 0.f}, \
 						              {PATH0UD, PATH0UD, "", ""}, {PATH1LR, PATH1LR, "", ""}};
 
-static level_t LEVEL1 = { 3, 2, {1, 1, 0, 0}, {1, 1, 0, 0}, {5000.f, 2000.f, 0, 0}, {1200.f, 4000.f, 0, 0}, {1000.f, 1000.f, 0, 0}, \
+static level_t LEVEL1 = { 2, 1, 1, {1, 1, 0, 0}, {1, 1, 0, 0}, {1750.f, 0, 0, 0}, {2000.f, 0, 0, 0}, {1000.f, 0, 0, 0},    \
+                          {PATH3UD, "", "", ""}, {PATH3LR, "", "", ""}};
+
+static level_t LEVEL2 = { 3, 1, 2, {1, 1, 0, 0}, {1, 1, 0, 0}, {5000.f, 2000.f, 0, 0}, {1200.f, 4000.f, 0, 0}, {1000.f, 1000.f, 0, 0}, \
                           {PATH2UD, PATH1UD, "", ""}, {PATH2LR, PATH2LR}};
 
-level_t *levels[NUM_LEVELS] = { &LEVEL0, &LEVEL1};
+level_t *levels[NUM_LEVELS] = { &LEVEL0, &LEVEL1, &LEVEL2 };
 
 static player_t player;
 static enemy_t enemies[MAX_NUM_ENEMIES];
@@ -174,6 +182,7 @@ void update_conditions();
 
 void update_frame();
 void push_frame();
+void tx_frame_data();
 
 void player_attack();
 void enemy_attack();
@@ -193,6 +202,7 @@ void game_over_animation(uint8_t type);
 
 void setup() {
   // put your setup code here, to run once:
+  Serial.begin(500000);
   init_io();
 
   init_game(0);
@@ -216,12 +226,29 @@ void loop() {
   } else if (game_data.g_state & PLAYING) {
     update_game();
     push_frame();
+
+    tx_frame_data();
   }
 }
 
 void init_io() {
   // input pins
   *DDR_B &= ~(U_BTN | D_BTN | R_BTN | L_BTN | A_BTN | B_BTN);
+}
+
+void tx_frame_data() {
+  uint8_t tx_byte = 0;
+  Serial.write(0x55);
+  for (int i = 0; i < 32; i += 1) {
+    tx_byte = 0;
+    for (int k = 0; k < GAME_HEIGHT; k += 1) {
+      uint32_t c_val = (game_data.frame[k] & (1 << i)) >> i;
+      tx_byte |= c_val << k;
+    }
+    Serial.write(tx_byte);
+    // p_bits(tx_byte, 8);
+  }
+  Serial.write(0x55);
 }
 
 void p_bits(uint32_t x, int width) {
@@ -234,8 +261,7 @@ void p_bits(uint32_t x, int width) {
 void print_frame() {
     Serial.print("========= BEGIN FRAME =========\n");
     for (int i = 0; i < GAME_HEIGHT; i += 1) {
-        p_bits(game_data.frame[i], 32);
+      p_bits(game_data.frame[i], 32);
     }
     Serial.print("=========  END  FRAME =========\n");
 }
-

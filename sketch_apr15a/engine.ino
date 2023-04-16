@@ -1,6 +1,4 @@
 void init_game(uint8_t lvl) {
-  game_data.g_state = PLAYING;
-
   player.sprite = 0;
   player.emitter = 0;
   player.r_pos = 0;
@@ -198,7 +196,7 @@ void update_input() {
       if (player.atk_timer.c_time >= player.atk_timer.interval) {
         // base attack
         player_attack();
-        enemy_attack();
+        if (levels[game_data.cur_level]->eq_firing) enemy_attack();
         // reset cd
         player.atk_timer.i_time = millis();
       }    
@@ -348,6 +346,11 @@ void update_conditions() {
       game_data.g_state = GAME_OVER;
       quip.say(spt_YOU_WIN);
       game_over_animation();
+    } else if (game_data.cur_stage < levels[game_data.cur_level]->num_waves) {
+      game_data.g_state = GAME_OVER;
+      game_data.cur_stage += 1;
+      quip.say(spt_NEXT);
+      quip.say(spt_ROUND);
     } else {
       game_data.g_state = GAME_OVER;
       game_data.cur_level += 1;
@@ -369,7 +372,6 @@ void update_frame() {
     p_depth = i - player.r_pos;
     if (p_depth >= 0 && p_depth <= player.s_height) {
       uint32_t p_slice = get_sprite_slice(p_depth, player.sprite);
-      // printf("\tp_slice       : "); p_bits(p_slice, 32);
       p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
       game_data.frame[i] |= p_slice;
     }
@@ -379,7 +381,6 @@ void update_frame() {
       e_depth = i - enemies[k].r_pos;
       if (e_depth >= 0 && e_depth < SPRITE_HEIGHT) {
         uint32_t e_slice = get_sprite_slice(e_depth, enemies[k].sprite);
-        // printf("\te_slice[%d]       : ", k); p_bits(e_slice, 32);
         e_slice <<= GAME_WIDTH - enemies[k].c_pos - SPRITE_WIDTH;
         game_data.frame[i] |= e_slice;
       }
@@ -453,85 +454,76 @@ void push_frame() {
 }
 
 void process_movement() {
-    for (int i = 0; i < game_data.num_enemies; i += 1) {
-        enemies[i].mvmt_timer[UD].c_time = millis() - enemies[i].mvmt_timer[UD].i_time;
-        enemies[i].mvmt_timer[LR].c_time = millis() - enemies[i].mvmt_timer[LR].i_time;
+  for (int i = 0; i < game_data.num_enemies; i += 1) {
+    enemies[i].mvmt_timer[UD].c_time = millis() - enemies[i].mvmt_timer[UD].i_time;
+    enemies[i].mvmt_timer[LR].c_time = millis() - enemies[i].mvmt_timer[LR].i_time;
 
-        if (enemies[i].mvmt_timer[UD].c_time >= enemies[i].mvmt_timer[UD].interval) {
-            if (enemies[i].mvmt_mask[UD]) { /* if mvmt enabled */
-                if (enemies[i].mvmt_mask[UD] & enemies[i].ud_mvmt) { /* move up */
-                    enemies[i].r_pos = (enemies[i].r_pos > 0 ? enemies[i].r_pos - 1 : 0);
-                } else { /* move down */
-                    enemies[i].r_pos = (enemies[i].r_pos + 2 < GAME_HEIGHT - 1 ? enemies[i].r_pos + 1 : GAME_HEIGHT - 2);
-                }
-
-                // rotate mask
-                enemies[i].mvmt_mask[UD] = U32LROT(enemies[i].mvmt_mask[UD]);
-            }
-
-            enemies[i].mvmt_timer[UD].i_time = millis();
+    if (enemies[i].mvmt_timer[UD].c_time >= enemies[i].mvmt_timer[UD].interval) {
+      if (enemies[i].mvmt_mask[UD]) { /* if mvmt enabled */
+        if (enemies[i].mvmt_mask[UD] & enemies[i].ud_mvmt) { /* move up */
+          enemies[i].r_pos = (enemies[i].r_pos > 0 ? enemies[i].r_pos - 1 : 0);
+        } else { /* move down */
+          enemies[i].r_pos = (enemies[i].r_pos + 2 < GAME_HEIGHT - 1 ? enemies[i].r_pos + 1 : GAME_HEIGHT - 2);
         }
 
-        if (enemies[i].mvmt_timer[LR].c_time >= enemies[i].mvmt_timer[LR].interval) {
-            if (enemies[i].mvmt_mask[LR]) { /* if mvmt enabled */
-                if (enemies[i].mvmt_mask[LR] & enemies[i].lr_mvmt) { /* move left */
-                    enemies[i].c_pos = (enemies[i].c_pos > 0 ? enemies[i].c_pos - 1 : 0);
-                } else { /* move right */
-                    enemies[i].c_pos = (enemies[i].c_pos < GAME_WIDTH ? enemies[i].c_pos + 1 : GAME_WIDTH);
-                }
+        // rotate mask
+        enemies[i].mvmt_mask[UD] = U32LROT(enemies[i].mvmt_mask[UD]);
+      }
 
-                // rotate mask
-                enemies[i].mvmt_mask[LR] = U32LROT(enemies[i].mvmt_mask[LR]);
-            }           
-
-            enemies[i].mvmt_timer[LR].i_time = millis();
-        }
+      enemies[i].mvmt_timer[UD].i_time = millis();
     }
 
-    // printf("\tmvmt_mask     : "); p_bits(enemies[0].mvmt_mask[UD], 32);
+    if (enemies[i].mvmt_timer[LR].c_time >= enemies[i].mvmt_timer[LR].interval) {
+      if (enemies[i].mvmt_mask[LR]) { /* if mvmt enabled */
+        if (enemies[i].mvmt_mask[LR] & enemies[i].lr_mvmt) { /* move left */
+          enemies[i].c_pos = (enemies[i].c_pos > 0 ? enemies[i].c_pos - 1 : 0);
+        } else { /* move right */
+          enemies[i].c_pos = (enemies[i].c_pos < GAME_WIDTH ? enemies[i].c_pos + 1 : GAME_WIDTH);
+        }
+
+        // rotate mask
+        enemies[i].mvmt_mask[LR] = U32LROT(enemies[i].mvmt_mask[LR]);
+      }           
+
+      enemies[i].mvmt_timer[LR].i_time = millis();
+    }
+  }
 }
 
 uint32_t set_movement(const char *mv_str) {
-    uint32_t m = 0;
-    uint8_t len = strlen(mv_str);
-    if (mv_str && len < 32) {
-        for (int i = 0; i < len; i += 1) {
-            switch (mv_str[i]) {
-                case 'l':
-                case 'L':
-                case 'u':
-                case 'U':
-                    m |= 1 << i;
-                    break;
-                    break;
-                default:
-                    break;
-            }
-        }
+  uint32_t m = 0;
+  uint8_t len = strlen(mv_str);
+  if (mv_str && len < 32) {
+    for (int i = 0; i < len; i += 1) {
+      if (mv_str[i] == 'l' || mv_str[i] == 'L' ||
+          mv_str[i] == 'u' || mv_str[i] == 'U') {
+        m |= 1 << i;
+      }
     }
+  }
 
-    return m;
+  return m;
 }
 
 uint32_t get_sprite_slice(uint8_t depth, uint16_t sprite) {
-    uint32_t slice = 0;
-    uint8_t slice_shift = (SPRITE_HEIGHT - depth - 1) * SPRITE_WIDTH;
+  uint32_t slice = 0;
+  uint8_t slice_shift = (SPRITE_HEIGHT - depth - 1) * SPRITE_WIDTH;
 
-    if (depth >= 0 && depth < SPRITE_HEIGHT) {
-        slice = sprite & (0x000F << (slice_shift));
-        slice >>= slice_shift;
-    } else {
-        return 0;
-    }
-    
-    return slice;
+  if (depth >= 0 && depth < SPRITE_HEIGHT) {
+    slice = sprite & (0x000F << (slice_shift));
+    slice >>= slice_shift;
+  } else {
+    return 0;
+  }
+  
+  return slice;
 }
 
 uint16_t clear_sprite_slice(uint8_t depth, uint16_t slice_mask, uint16_t sprite) {
-    if (depth >= 0 && depth < SPRITE_HEIGHT) {
-        slice_mask <<= ((SPRITE_HEIGHT - depth - 1) * SPRITE_WIDTH);
-        sprite &= ~slice_mask;
-    }
+  if (depth >= 0 && depth < SPRITE_HEIGHT) {
+    slice_mask <<= ((SPRITE_HEIGHT - depth - 1) * SPRITE_WIDTH);
+    sprite &= ~slice_mask;
+  }
 
-    return sprite;
+  return sprite;
 }
