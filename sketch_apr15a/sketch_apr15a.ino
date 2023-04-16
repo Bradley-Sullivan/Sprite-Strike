@@ -38,6 +38,7 @@
 
 #define GAME_OVER       0x01
 #define PLAYING         0x02
+#define INIT            0x04
 
 // DISPLAY
 #define HWTYPE      MD_MAX72XX::GENERIC_HW
@@ -82,7 +83,6 @@ typedef struct player_t {
     uint32_t    emitter;
     uint8_t     c_pos;
     uint8_t     r_pos;
-    uint8_t     s_width;    // local width that reflects sprite deformation
     uint8_t     s_height;   // local height that reflects you guessed it sprite deformation
 
     game_timer_t     atk_timer;
@@ -191,15 +191,21 @@ void setup() {
 
   game_data.i_time = millis();
 
-  randomSeed(analogRead(4));
+  randomSeed(random());
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   game_data.g_time = millis() - game_data.i_time;
-
-  update_game();
-  push_frame();
+  if (!(game_data.g_state & GAME_OVER)) {
+    // play animation?
+    // game over screen?? (continue/play again options?)
+  } else if (game_data.g_state & INIT) {
+    // character creation and serial data sync
+  } else if (game_data.g_state & PLAYING) {
+    update_game();
+    push_frame();
+  }
 }
 
 void init_io() {

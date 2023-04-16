@@ -25,9 +25,8 @@ void spawn_enemies(uint8_t level) {
 			enemies[i].r_pos = (i * SPRITE_HEIGHT) % GAME_HEIGHT;
 			enemies[i].c_pos = GAME_WIDTH - (i * SPRITE_WIDTH);
 
-			enemies[i].sprite = e_sprites[(int)rand() % NUM_ETYPES];
-			enemies[i].emitter = e_emitters[0];
-      // enemies[i].emitter = 0;
+			enemies[i].sprite = e_sprites[(int)random(0, NUM_ETYPES)];
+			enemies[i].emitter = e_emitters[(int)random(0, NUM_ETYPES)];
 
 			enemies[i].atk_timer.interval = levels[level]->atk_intervals[i];
 
@@ -89,7 +88,7 @@ void update_input() {
     } if (game_data.input & U_BTN) {
       player.r_pos = (player.r_pos > 0 ? player.r_pos - 1 : 0);
     } if (game_data.input & D_BTN) {
-      player.r_pos = (player.r_pos + SPRITE_HEIGHT < GAME_HEIGHT - 1 ? player.r_pos + 1 : GAME_HEIGHT - SPRITE_HEIGHT);
+      player.r_pos = (player.r_pos + player.s_height < GAME_HEIGHT ? player.r_pos + 1 : GAME_HEIGHT - player.s_height);
     } if (game_data.input & R_BTN) {
       player.c_pos = (player.c_pos < GAME_WIDTH - 1 ? player.c_pos + 1 : GAME_WIDTH);
     } if (game_data.input & L_BTN) {
@@ -103,14 +102,27 @@ void update_input() {
 }
 
 void update_player() {
+  static uint32_t sprite_cache = 0;
   uint32_t p_slice = 0, e_slice = 0;
 
   player.atk_timer.c_time = millis() - player.atk_timer.i_time;
   player.super_timer.c_time = millis() - player.super_timer.i_time;
 
+  // recalculates sprite height if sprite deformation is detected
+  if (sprite_cache != player.sprite) {
+    player.s_height = 0;
+    for (int i = 0; i < SPRITE_HEIGHT; i += 1) {
+      if (player.sprite & (0x000F << (i * SPRITE_WIDTH))) player.s_height += 1;
+    }
+
+    if (!(player.sprite & 0xF000)) {
+      player.sprite <<= SPRITE_WIDTH;
+    }
+  }
+  
   for (int i = 0; i < GAME_HEIGHT; i += 1) {
     uint8_t p_depth = i - player.r_pos;
-    if (p_depth >= 0 && p_depth < SPRITE_HEIGHT) { /* if "scanline" hits player */
+    if (p_depth >= 0 && p_depth < player.s_height) { /* if "scanline" hits player */
       p_slice = get_sprite_slice(p_depth, player.sprite);
       p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
       p_slice &= game_data.e_proj[i];
@@ -141,6 +153,8 @@ void update_player() {
       }
     }
   }
+
+  sprite_cache = player.sprite;
 }
 
 void update_enemies() {
@@ -239,7 +253,7 @@ void update_frame() {
 
     // store player sprite
     p_depth = i - player.r_pos;
-    if (p_depth >= 0 && p_depth < SPRITE_HEIGHT) {
+    if (p_depth >= 0 && p_depth <= player.s_height) {
       uint32_t p_slice = get_sprite_slice(p_depth, player.sprite);
       // printf("\tp_slice       : "); p_bits(p_slice, 32);
       p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
@@ -265,7 +279,7 @@ void player_attack(uint8_t super) {
   } else {
     for (int i = 0; i < GAME_HEIGHT; i += 1) {
       uint8_t p_depth = i - player.r_pos;
-      if (p_depth >= 0 && p_depth < SPRITE_HEIGHT) {
+      if (p_depth >= 0 && p_depth < player.s_height) {
         uint32_t em_slice = get_sprite_slice(p_depth, player.emitter);
         em_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
         game_data.p_proj[i] |= em_slice;
