@@ -1,3 +1,5 @@
+#include "sprite_strike.h"
+
 void init_game(uint8_t lvl) {
   player.sprite = 0;
   player.emitter = 0;
@@ -7,7 +9,7 @@ void init_game(uint8_t lvl) {
   player.atk_timer.interval = P_ATK_CD;
   player.atk_timer.i_time = millis();
 
-	spawn_enemies(lvl);
+  spawn_enemies(lvl); 
 
   game_data.p_proj_timer.interval = P_PROJ_INTV;
   game_data.e_proj_timer.interval = E_PROJ_INTV;
@@ -28,24 +30,24 @@ void spawn_enemies(uint8_t level) {
 			enemies[i].r_pos = (i * SPRITE_HEIGHT) % GAME_HEIGHT;
 			enemies[i].c_pos = GAME_WIDTH - (i * SPRITE_WIDTH);
 
-      randomSeed(analogRead(0));
-			enemies[i].sprite = e_sprites[(int)random(NUM_ETYPES)];
-      randomSeed(analogRead(0));
-			enemies[i].emitter = e_emitters[(int)random(NUM_ETYPES)];
+            randomSeed(analogRead(0));
+            enemies[i].sprite = e_sprites[(int)random(NUM_ETYPES)];
+            randomSeed(analogRead(0));
+            enemies[i].emitter = e_emitters[(int)random(NUM_ETYPES)];
 
-			enemies[i].atk_timer.interval = levels[level]->atk_intervals[i];
+            enemies[i].atk_timer.interval = levels[level]->atk_intervals[i];
 
-			enemies[i].mvmt_mask[UD] = levels[level]->ud_masks[i];
-			enemies[i].mvmt_mask[LR] = levels[level]->lr_masks[i];
+            enemies[i].mvmt_mask[UD] = levels[level]->ud_masks[i];
+            enemies[i].mvmt_mask[LR] = levels[level]->lr_masks[i];
 
-			enemies[i].mvmt_timer[UD].interval = levels[level]->ud_intervals[i];
-			enemies[i].mvmt_timer[LR].interval = levels[level]->lr_intervals[i];
+            enemies[i].mvmt_timer[UD].interval = levels[level]->ud_intervals[i];
+            enemies[i].mvmt_timer[LR].interval = levels[level]->lr_intervals[i];
 
-			enemies[i].ud_mvmt = set_movement(levels[level]->ud_pathing[i]);
-			enemies[i].lr_mvmt = set_movement(levels[level]->lr_pathing[i]);
+            enemies[i].ud_mvmt = set_movement(levels[level]->ud_pathing[i]);
+            enemies[i].lr_mvmt = set_movement(levels[level]->lr_pathing[i]);
 
-			enemies[i].mvmt_timer[UD].i_time = millis();
-			enemies[i].mvmt_timer[LR].i_time = millis();
+            enemies[i].mvmt_timer[UD].i_time = millis();
+            enemies[i].mvmt_timer[LR].i_time = millis();
 		}
 	}
 }
@@ -233,9 +235,10 @@ void update_player() {
   for (int i = 0; i < GAME_HEIGHT; i += 1) {
     uint8_t p_depth = i - player.r_pos;
     if (p_depth >= 0 && p_depth < player.s_height) { /* if "scanline" hits player */
-      p_slice = get_sprite_slice(p_depth, player.sprite);
-      p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
-      p_slice &= game_data.e_proj[i];
+    //   p_slice = get_sprite_slice(p_depth, player.sprite);
+    //   p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
+    //   p_slice &= game_data.e_proj[i];
+      p_slice = sprite_proj_collision(player.sprite, game_data.e_proj[i], p_depth, player.c_pos);
 
       if (p_slice) {
         // consume projectile
@@ -250,11 +253,12 @@ void update_player() {
       for (int k = 0; k < game_data.num_enemies; k += 1) {
         uint8_t e_depth = i - enemies[k].r_pos;
         if (e_depth == p_depth) {
-          e_slice = get_sprite_slice(e_depth, enemies[k].sprite);
-          p_slice = get_sprite_slice(p_depth, player.sprite);
-          e_slice <<= GAME_WIDTH - enemies[k].c_pos - SPRITE_WIDTH;
-          p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
-          p_slice &= e_slice;
+          // e_slice = get_sprite_slice(e_depth, enemies[k].sprite);
+          // p_slice = get_sprite_slice(p_depth, player.sprite);
+          // e_slice <<= GAME_WIDTH - enemies[k].c_pos - SPRITE_WIDTH;
+          // p_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
+          // p_slice &= e_slice;
+          p_slice = sprite_collision(enemies[k].sprite, player.sprite, p_depth, enemies[k].c_pos, player.c_pos);
 
           if (p_slice) {
             game_data.g_state |= GAME_OVER;
@@ -280,9 +284,11 @@ void update_enemies() {
           enemy_attack();
         }
 
-        e_slice = get_sprite_slice(e_depth, enemies[k].sprite);
-        e_slice <<= GAME_WIDTH - enemies[k].c_pos - SPRITE_WIDTH;
-        e_slice &= game_data.p_proj[i];
+        // e_slice = get_sprite_slice(e_depth, enemies[k].sprite);
+        // e_slice <<= GAME_WIDTH - enemies[k].c_pos - SPRITE_WIDTH;
+        // e_slice &= game_data.p_proj[i];
+
+        e_slice = sprite_proj_collision(enemies[k].sprite, game_data.p_proj[i], e_depth, enemies[k].c_pos);
 
         if (e_slice) {  /* p_proj and enemy collision */
           // consume projectile
@@ -394,6 +400,7 @@ void player_attack() {
     if (p_depth >= 0 && p_depth < player.s_height) {
       uint32_t em_slice = get_sprite_slice(p_depth, player.emitter);
       em_slice <<= GAME_WIDTH - player.c_pos - SPRITE_WIDTH;
+      // fire projectile
       game_data.p_proj[i] |= em_slice;
     }
   }
@@ -405,10 +412,9 @@ void enemy_attack() {
       uint8_t e_depth = i - enemies[k].r_pos;
       uint32_t em_slice = get_sprite_slice(e_depth, enemies[k].emitter);
       em_slice <<= GAME_WIDTH - enemies[k].c_pos - SPRITE_WIDTH;
-
       // fire projectile
       game_data.e_proj[i] |= em_slice;
-
+      // reset atk timer
       enemies[k].atk_timer.i_time = millis();
     }
   }
@@ -444,7 +450,6 @@ void game_over() {
 void push_frame() {
   disp.control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
   disp.clear();
-  // print_frame();
   for (int i = 0; i < GAME_HEIGHT; i += 1) {
     disp.setRow(2, i, (uint8_t)((game_data.frame[i] & 0x00FF0000) >> 16));
     disp.setRow(1, i, (uint8_t)((game_data.frame[i] & 0x0000FF00) >> 8));
@@ -470,6 +475,7 @@ void process_movement() {
         enemies[i].mvmt_mask[UD] = U32LROT(enemies[i].mvmt_mask[UD]);
       }
 
+      // reset movement timer
       enemies[i].mvmt_timer[UD].i_time = millis();
     }
 
@@ -485,6 +491,7 @@ void process_movement() {
         enemies[i].mvmt_mask[LR] = U32LROT(enemies[i].mvmt_mask[LR]);
       }           
 
+      // reset movement timer
       enemies[i].mvmt_timer[LR].i_time = millis();
     }
   }
@@ -503,6 +510,27 @@ uint32_t set_movement(const char *mv_str) {
   }
 
   return m;
+}
+
+uint32_t sprite_proj_collision(uint16_t sprite, uint32_t proj, uint8_t depth, uint8_t col) {
+  uint32_t s_slice = get_sprite_slice(depth, sprite);
+
+  s_slice <<= GAME_WIDTH - col - SPRITE_WIDTH;
+  s_slice &= proj;
+
+  return s_slice;
+}
+
+uint32_t sprite_collision(uint16_t sprite_a, uint16_t sprite_b, uint8_t depth, uint8_t a_col, uint8_t b_col) {
+  uint32_t a_slice = get_sprite_slice(depth, sprite_a);
+  uint32_t b_slice = get_sprite_slice(depth, sprite_b);
+
+  a_slice <<= GAME_WIDTH - a_col - SPRITE_WIDTH;
+  b_slice <<= GAME_WIDTH - b_col - SPRITE_WIDTH;
+
+  b_slice &= a_slice;
+
+  return b_slice;
 }
 
 uint32_t get_sprite_slice(uint8_t depth, uint16_t sprite) {
